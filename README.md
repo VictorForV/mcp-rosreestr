@@ -1,16 +1,17 @@
 <!-- mcp-name: io.github.atomno-mcp/mcp-rosreestr -->
+
 # mcp-rosreestr
 
-> MCP server for Russian Rosreestr open cadastral data — lookup by cadastral number, address or coordinates; cadastral value with history.
+MCP-сервер Росреестра: объект по кадастровому номеру, адресу или координатам, кадастровая стоимость с историей. Только открытые сведения, без данных о собственниках.
+
+Russian cadastral data for AI agents.
 
 [![PyPI version](https://img.shields.io/pypi/v/atomno-mcp-rosreestr.svg)](https://pypi.org/project/atomno-mcp-rosreestr/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![MCP-compatible](https://img.shields.io/badge/MCP-compatible-blue.svg)](https://modelcontextprotocol.io/)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 
----
-
-MCP-сервер (Model Context Protocol — открытый протокол интеграции AI-агентов с внешними источниками данных), дающий ИИ-агенту прямой доступ к публичным открытым данным Росреестра РФ через НСПД (Национальная система пространственных данных, `nspd.gov.ru`) и Публичную кадастровую карту (ПКК) как fallback.
+Открытые данные Росреестра через НСПД (Национальная система пространственных данных, `nspd.gov.ru`); Публичная кадастровая карта — запасной источник.
 
 Часть семейства MCP-серверов **atomno** ([atomno-mcp.ru](https://atomno-mcp.ru)). Открытый MIT — никакой PII собственников, только публичные характеристики объекта.
 
