@@ -13,10 +13,10 @@ import argparse
 import asyncio
 import logging
 import os
+import ssl
 import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any
 
 import httpx
 from mcp.server.fastmcp import Context, FastMCP
@@ -63,6 +63,7 @@ _LEGACY_ENV_RENAME: dict[str, str] = {
     "ROSREESTR_CACHE_TTL_LIVE": "MCP_ROSREESTR_CACHE_TTL_LIVE",
     "ROSREESTR_CACHE_TTL_STATIC": "MCP_ROSREESTR_CACHE_TTL_STATIC",
     "ROSREESTR_USER_AGENT": "MCP_ROSREESTR_USER_AGENT",
+    "ROSREESTR_CA_FILE": "MCP_ROSREESTR_CA_FILE",
 }
 _warned_legacy_envs: set[str] = set()
 
@@ -110,6 +111,15 @@ def _read_int_env(name: str, default: int) -> int:
         return default
 
 
+def _build_ssl_context() -> ssl.SSLContext:
+    """Build normal system trust plus an optional project-specific CA file."""
+    context = ssl.create_default_context()
+    ca_file = _resolve_env("MCP_ROSREESTR_CA_FILE")
+    if ca_file:
+        context.load_verify_locations(cafile=ca_file)
+    return context
+
+
 def build_tool_context() -> tuple[ToolContext, httpx.AsyncClient, SqliteCache]:
     """Construct the ``ToolContext`` used by every tool."""
     timeout = _read_float_env("MCP_ROSREESTR_HTTP_TIMEOUT", DEFAULT_TIMEOUT)
@@ -123,11 +133,14 @@ def build_tool_context() -> tuple[ToolContext, httpx.AsyncClient, SqliteCache]:
 
     http_client = httpx.AsyncClient(
         timeout=timeout,
+        verify=_build_ssl_context(),
         headers={
             "User-Agent": user_agent,
             "Accept": "application/json,*/*",
         },
-        transport=httpx.AsyncHTTPTransport(retries=2),
+        # Keep the default transport so HTTPX honours HTTP(S)_PROXY and NO_PROXY.
+        # Supplying a custom AsyncHTTPTransport here silently bypasses env proxies.
+        trust_env=True,
     )
     rr_client = RosreestrClient(http_client=http_client, timeout=timeout, user_agent=user_agent)
     cache = SqliteCache(cache_path)
@@ -346,6 +359,7 @@ _CLI_EPILOG = (
     "  MCP_ROSREESTR_CACHE_TTL_LIVE    — TTL «живых» данных (сек).\n"
     "  MCP_ROSREESTR_CACHE_TTL_STATIC  — TTL статичных данных (сек).\n"
     "  MCP_ROSREESTR_USER_AGENT        — User-Agent для upstream.\n"
+    "  MCP_ROSREESTR_CA_FILE           — дополнительный доверенный TLS CA (PEM).\n"
     "  MCP_ROSREESTR_LOG_LEVEL         — уровень логирования (перекрывается --log-level).\n"
     "\n"
     "Legacy-имена ROSREESTR_* поддерживаются с DeprecationWarning.\n"
@@ -452,11 +466,11 @@ def main(argv: list[str] | None = None) -> int:
         args.transport,
     )
 
-    run_kwargs: dict[str, Any] = {"transport": args.transport}
+    transport = "streamable-http" if args.transport == "http" else args.transport
     if args.transport in {"http", "sse", "streamable-http"}:
-        run_kwargs["host"] = args.host
-        run_kwargs["port"] = args.port
-    mcp.run(**run_kwargs)
+        mcp.settings.host = args.host
+        mcp.settings.port = args.port
+    mcp.run(transport=transport)
     return 0
 
 

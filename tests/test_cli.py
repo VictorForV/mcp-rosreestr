@@ -13,9 +13,8 @@ import httpx
 import pytest
 import respx
 
-from mcp_rosreestr import __version__
+from mcp_rosreestr import __version__, server
 from mcp_rosreestr.constants import ENV_LOG_LEVEL
-from mcp_rosreestr import server
 
 
 @pytest.fixture(autouse=True)
@@ -33,6 +32,8 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "ROSREESTR_CACHE_TTL_STATIC",
         "MCP_ROSREESTR_USER_AGENT",
         "ROSREESTR_USER_AGENT",
+        "MCP_ROSREESTR_CA_FILE",
+        "ROSREESTR_CA_FILE",
     ):
         monkeypatch.delenv(var, raising=False)
     server._warned_legacy_envs.clear()
@@ -234,11 +235,11 @@ class TestBuildToolContext:
 
 
 class TestHttpTransportKwargs:
-    def test_http_transport_passes_host_and_port(self, fake_run: dict[str, Any]) -> None:
+    def test_http_transport_configures_host_port_and_alias(
+        self, fake_run: dict[str, Any]
+    ) -> None:
         rc = server.main(["--transport", "http", "--host", "0.0.0.0", "--port", "9000"])
         assert rc == 0
-        assert fake_run["kwargs"] == {
-            "transport": "http",
-            "host": "0.0.0.0",
-            "port": 9000,
-        }
+        assert fake_run["kwargs"] == {"transport": "streamable-http"}
+        assert server.mcp.settings.host == "0.0.0.0"
+        assert server.mcp.settings.port == 9000

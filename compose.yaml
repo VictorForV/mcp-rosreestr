@@ -1,0 +1,48 @@
+name: mcp-rosreestr
+
+services:
+  mcp:
+    build:
+      context: .
+    image: ${MCP_ROSREESTR_IMAGE:-mcp-rosreestr:local}
+    restart: unless-stopped
+    init: true
+    command:
+      - --transport
+      - http
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+    environment:
+      MCP_ROSREESTR_HTTP_TIMEOUT: ${MCP_ROSREESTR_HTTP_TIMEOUT:-20}
+      MCP_ROSREESTR_CACHE_PATH: /data/cache.sqlite
+      MCP_ROSREESTR_CA_FILE: /run/certs/russian_trusted_root_ca.pem
+      MCP_ROSREESTR_LOG_LEVEL: ${MCP_ROSREESTR_LOG_LEVEL:-INFO}
+    ports:
+      - "${MCP_ROSREESTR_BIND_ADDRESS:-127.0.0.1}:${MCP_ROSREESTR_BIND_PORT:-8000}:8080"
+    volumes:
+      - rosreestr_data:/data
+      - ./certs/russian_trusted_root_ca.pem:/run/certs/russian_trusted_root_ca.pem:ro
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import socket; s=socket.create_connection(('127.0.0.1', 8080), 2); s.close()"
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+volumes:
+  rosreestr_data:

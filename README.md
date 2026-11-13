@@ -69,7 +69,7 @@ mcp-rosreestr
 
 ```bash
 atomno-mcp-rosreestr --help          # usage
-atomno-mcp-rosreestr --version       # 0.1.0
+atomno-mcp-rosreestr --version       # текущая версия
 atomno-mcp-rosreestr --check-config  # кэш + upstream NSPD/PKK
 atomno-mcp-rosreestr --transport http --port 8000  # сетевой транспорт
 ```
@@ -82,6 +82,33 @@ atomno-mcp-rosreestr --check-config
 
 Выведет состояние локального кэша и доступность upstream-сервисов (NSPD, PKK).
 
+### Docker Compose
+
+Готовый вариант для самостоятельного развёртывания запускает HTTP MCP только на
+`127.0.0.1:8000`. Перед первым стартом скрипт получает официальный корневой
+сертификат, необходимый для TLS НСПД, и проверяет его закреплённый SHA-256:
+
+```bash
+git clone https://github.com/VictorForV/mcp-rosreestr.git
+cd mcp-rosreestr
+./deploy/fetch-nspd-ca.sh
+docker compose up -d --build
+docker compose ps
+```
+
+Endpoint: `http://127.0.0.1:8000/mcp`.
+
+Проверка реальным кадастровым номером:
+
+```bash
+python -m venv .venv
+.venv/bin/pip install -e .
+.venv/bin/python query_mcp.py 77:08:0005003:1031
+```
+
+Production-схема с общей Docker-сетью и пример Caddy описаны в
+[`DEPLOYMENT.md`](DEPLOYMENT.md).
+
 ## Конфигурация (env vars)
 
 Canonical-имена — с префиксом `MCP_ROSREESTR_`. Legacy `ROSREESTR_*` поддерживаются с DeprecationWarning.
@@ -93,6 +120,7 @@ Canonical-имена — с префиксом `MCP_ROSREESTR_`. Legacy `ROSREES
 | `MCP_ROSREESTR_CACHE_TTL_LIVE` | TTL «живых» данных (стоимость) в секундах | `86400` (24 ч) |
 | `MCP_ROSREESTR_CACHE_TTL_STATIC` | TTL «статичных» данных (площадь, год) в секундах | `604800` (7 дней) |
 | `MCP_ROSREESTR_USER_AGENT` | Кастомный User-Agent для upstream | `atomno-mcp-rosreestr/<version> ...` |
+| `MCP_ROSREESTR_CA_FILE` | Дополнительный доверенный TLS CA в PEM (например, корневой сертификат Минцифры для НСПД) | — |
 | `MCP_ROSREESTR_LOG_LEVEL` | Уровень логирования (`DEBUG`…`CRITICAL`) | `INFO` |
 | `MCP_ROSREESTR_API_KEY` | Pro-фичи (не требуется для open client) | — |
 

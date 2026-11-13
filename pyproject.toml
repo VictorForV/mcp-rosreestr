@@ -81,9 +81,13 @@ include = [
     "README.md",
     "LICENSE",
     "CHANGELOG.md",
+    "DEPLOYMENT.md",
     "pyproject.toml",
     ".env.example",
+    "compose.yaml",
     "Dockerfile",
+    "deploy/**",
+    "query_mcp.py",
     "glama.json",
 ]
 exclude = [

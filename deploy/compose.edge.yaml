@@ -1,0 +1,11 @@
+services:
+  mcp:
+    networks:
+      default: {}
+      edge:
+        aliases:
+          - rosreestr-mcp
+
+networks:
+  edge:
+    external: true

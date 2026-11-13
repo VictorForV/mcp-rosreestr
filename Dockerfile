@@ -28,7 +28,9 @@ FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-RUN useradd --create-home --shell /bin/bash mcp
+RUN useradd --create-home --shell /bin/bash mcp \
+    && mkdir -p /data \
+    && chown mcp:mcp /data
 WORKDIR /home/mcp
 
 COPY --from=build /usr/local/lib/python3.12/site-packages/ /usr/local/lib/python3.12/site-packages/

@@ -1,0 +1,27 @@
+# Add this site block to a Caddy container connected to the same external
+# Docker network `edge`. Set both variables in Caddy's environment.
+#
+# ROSREESTR_MCP_DOMAIN=rosreestr.example.com
+# ROSREESTR_MCP_PATH_TOKEN=<a long random value, e.g. openssl rand -hex 24>
+
+{$ROSREESTR_MCP_DOMAIN} {
+	log {
+		output stdout
+		format filter {
+			wrap json
+			fields {
+				request>uri delete
+			}
+		}
+	}
+
+	handle_path /{$ROSREESTR_MCP_PATH_TOKEN}/* {
+		reverse_proxy rosreestr-mcp:8080 {
+			# FastMCP enables DNS-rebinding protection for HTTP transports.
+			header_up Host localhost:8080
+			flush_interval -1
+		}
+	}
+
+	respond 404
+}

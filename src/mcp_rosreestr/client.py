@@ -41,6 +41,10 @@ DEFAULT_TIMEOUT: Final[float] = 15.0
 DEFAULT_USER_AGENT: Final[str] = (
     "atomno-mcp-rosreestr/0.1 (+https://github.com/atomno-mcp/mcp-rosreestr)"
 )
+NSPD_REQUEST_HEADERS: Final[dict[str, str]] = {
+    "Referer": "https://nspd.gov.ru/map?thematic=PKK",
+    "Origin": "https://nspd.gov.ru",
+}
 
 
 def _parse_iso_date(raw: Any) -> date | None:
@@ -72,7 +76,7 @@ def _parse_float(raw: Any) -> float | None:
         return None
     if isinstance(raw, int | float):
         return float(raw)
-    text = str(raw).replace(",", ".").strip()
+    text = str(raw).replace("\xa0", "").replace(" ", "").replace(",", ".").strip()
     if not text or text in {"-", "—", "n/a", "None"}:
         return None
     try:
@@ -92,12 +96,16 @@ def _parse_int(raw: Any) -> int | None:
 # We map them to the canonical ObjectType literal used in :mod:`schemas`.
 _NSPD_CATEGORY_TO_TYPE: dict[str, str] = {
     "помещение": "apartment",
+    "помещения": "apartment",
     "квартира": "apartment",
     "комната": "apartment",
     "здание": "house",
+    "здания": "house",
     "жилой дом": "house",
     "земельный участок": "land_plot",
+    "земельные участки": "land_plot",
     "сооружение": "non_residential",
+    "сооружения": "non_residential",
     "нежилое помещение": "non_residential",
     "нежилое здание": "non_residential",
     "машиноместо": "garage",
@@ -112,6 +120,39 @@ def _classify_object_type(category: Any) -> str:
         return "unknown"
     key = str(category).strip().lower()
     return _NSPD_CATEGORY_TO_TYPE.get(key, "unknown")
+
+
+def _feature_properties(feature: dict[str, Any]) -> dict[str, Any]:
+    """Flatten a feature's public properties and nested NSPD ``options``."""
+    props = feature.get("properties") or feature.get("attrs") or feature
+    if not isinstance(props, dict):
+        return {}
+    options = props.get("options")
+    return {**props, **options} if isinstance(options, dict) else dict(props)
+
+
+def _first_value(mapping: dict[str, Any], *keys: str) -> Any:
+    """Return the first present, non-empty value without dropping numeric zero."""
+    for key in keys:
+        value = mapping.get(key)
+        if value is not None and value != "":
+            return value
+    return None
+
+
+def _feature_cadastral_number(feature: dict[str, Any]) -> str | None:
+    props = _feature_properties(feature)
+    value = _first_value(
+        props,
+        "cad_num",
+        "cad_number",
+        "cadastralNumber",
+        "kadastrovyy_nomer",
+        "number",
+        "cn",
+        "descr",
+    )
+    return str(value).replace(" ", "").strip() if value is not None else None
 
 
 # --- Client -------------------------------------------------------------------
@@ -152,9 +193,14 @@ class RosreestrClient:
 
     # ------------------------------------------------------------------ HTTP
 
-    async def _get_json(self, url: str, params: dict[str, Any] | None = None) -> Any:
+    async def _get_json(
+        self,
+        url: str,
+        params: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> Any:
         try:
-            response = await self._client.get(url, params=params)
+            response = await self._client.get(url, params=params, headers=headers)
         except httpx.TimeoutException as exc:
             raise RosreestrTimeoutError(f"timeout while requesting {url}") from exc
         except httpx.HTTPError as exc:
@@ -208,7 +254,7 @@ class RosreestrClient:
             "query": query,
             "limit": limit,
         }
-        data = await self._get_json(url, params=params)
+        data = await self._get_json(url, params=params, headers=NSPD_REQUEST_HEADERS)
         features = self._extract_features(data)
         return features
 
@@ -233,7 +279,7 @@ class RosreestrClient:
             "query": f"{lat},{lon}",
             "limit": 10,
         }
-        data = await self._get_json(url, params=params)
+        data = await self._get_json(url, params=params, headers=NSPD_REQUEST_HEADERS)
         return self._extract_features(data)
 
     @staticmethod
@@ -283,13 +329,18 @@ class RosreestrClient:
     ) -> dict[str, Any]:
         """Fetch raw object metadata, trying NSPD first, then PKK."""
         try:
-            features = await self.search_nspd(cadastral_number, limit=1)
+            features = await self.search_nspd(cadastral_number, limit=10)
         except (RosreestrApiError, RosreestrTimeoutError, RosreestrParseError) as exc:
             logger.warning("NSPD lookup failed for %s: %s; trying PKK", cadastral_number, exc)
             features = []
 
-        if features:
-            return {"source": "nspd", "feature": features[0]}
+        requested = cadastral_number.replace(" ", "").strip()
+        exact_match = next(
+            (feature for feature in features if _feature_cadastral_number(feature) == requested),
+            None,
+        )
+        if exact_match is not None:
+            return {"source": "nspd", "feature": exact_match}
 
         pkk = await self.fetch_pkk_object(cadastral_number)
         if pkk:
@@ -312,52 +363,85 @@ class RosreestrClient:
         """
         source = raw.get("source", "nspd")
         feature = raw.get("feature", raw)
-        props = feature.get("properties") or feature.get("attrs") or feature
-        options = props.get("options") if isinstance(props, dict) else None
-        if isinstance(options, dict):
-            merged = {**props, **options}
-        else:
-            merged = dict(props) if isinstance(props, dict) else {}
+        merged = _feature_properties(feature)
 
-        category = (
-            merged.get("category_type")
-            or merged.get("categoryType")
-            or merged.get("category")
-            or merged.get("type")
-            or merged.get("oks_type")
+        category = _first_value(
+            merged,
+            "category_type",
+            "categoryType",
+            "land_record_type",
+            "build_record_type_value",
+            "object_type_value",
+            "object_under_construction_record_record_type_value",
+            "category_name",
+            "category",
+            "type",
+            "oks_type",
         )
 
         cad_cost = _parse_float(
-            merged.get("cad_cost")
-            or merged.get("cadastralCost")
-            or merged.get("kadastrovaya_stoimost")
+            _first_value(
+                merged,
+                "cost_value",
+                "cad_cost",
+                "cadastralCost",
+                "kadastrovaya_stoimost",
+            )
         )
         cad_cost_date = _parse_iso_date(
-            merged.get("cad_cost_date")
-            or merged.get("cadastralCostDate")
-            or merged.get("data_kadastrovoy_stoimosti")
+            _first_value(
+                merged,
+                "cost_determination_date",
+                "cost_date",
+                "date_cost",
+                "cad_cost_date",
+                "cadastralCostDate",
+                "data_kadastrovoy_stoimosti",
+            )
         )
         area = _parse_float(
-            merged.get("area_value") or merged.get("area") or merged.get("specified_area")
+            _first_value(
+                merged,
+                "area_value",
+                "area",
+                "specified_area",
+                "declared_area",
+                "build_record_area",
+                "params_area",
+                "params_built_up_area",
+                "built_up_area",
+            )
         )
-        permitted_use = (
-            merged.get("permitted_use_established_by_document")
-            or merged.get("permittedUse")
-            or merged.get("vid_ispolzovaniya")
+        permitted_use = _first_value(
+            merged,
+            "permitted_use_established_by_document",
+            "permittedUse",
+            "vid_ispolzovaniya",
         )
-        address = (
-            merged.get("readable_address")
-            or merged.get("address")
-            or merged.get("address_value")
-            or merged.get("addr")
+        address = _first_value(
+            merged,
+            "readable_address",
+            "address_readable_address",
+            "address",
+            "address_value",
+            "addr",
         )
         registration_date = _parse_iso_date(
-            merged.get("registration_date") or merged.get("date_registration")
+            _first_value(
+                merged,
+                "registration_date",
+                "build_record_registration_date",
+                "date_registration",
+            )
         )
         year_built = _parse_int(
-            merged.get("year_built")
-            or merged.get("year_construction")
-            or merged.get("yearOfCommissioning")
+            _first_value(
+                merged,
+                "year_built",
+                "params_year_built",
+                "year_construction",
+                "yearOfCommissioning",
+            )
         )
 
         return {
@@ -380,6 +464,7 @@ __all__ = [
     "DEFAULT_TIMEOUT",
     "DEFAULT_USER_AGENT",
     "NSPD_BASE_URL",
+    "NSPD_REQUEST_HEADERS",
     "PKK_BASE_URL",
     "RosreestrClient",
     "RosreestrUpstreamUnavailable",

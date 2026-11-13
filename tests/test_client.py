@@ -45,8 +45,10 @@ async def test_search_nspd_extracts_features_data_envelope(rr_client: RosreestrC
             200, content=load_fixture("nspd_apartment.json")
         )
         features = await rr_client.search_nspd("77:01:0001066:1234")
+        request = mock.calls.last.request
     assert len(features) == 1
     assert features[0]["properties"]["cad_num"] == "77:01:0001066:1234"
+    assert request.headers["Referer"] == "https://nspd.gov.ru/map?thematic=PKK"
 
 
 @pytest.mark.asyncio
@@ -112,6 +114,27 @@ async def test_get_object_by_cadastral_raises_not_found(rr_client: RosreestrClie
 
 
 @pytest.mark.asyncio
+async def test_get_object_by_cadastral_selects_exact_nested_options_match(
+    rr_client: RosreestrClient,
+) -> None:
+    with respx.mock(assert_all_called=True) as mock:
+        mock.get(f"{NSPD_BASE_URL}/api/geoportal/v2/search/geoportal").respond(
+            200,
+            json={
+                "data": {
+                    "features": [
+                        {"properties": {"options": {"cad_num": "77:08:0005003:9999"}}},
+                        {"properties": {"options": {"cad_num": "77:08:0005003:1031"}}},
+                    ]
+                }
+            },
+        )
+        raw = await rr_client.get_object_by_cadastral("77:08:0005003:1031")
+
+    assert raw["feature"]["properties"]["options"]["cad_num"] == "77:08:0005003:1031"
+
+
+@pytest.mark.asyncio
 async def test_search_nspd_4xx_becomes_api_error(rr_client: RosreestrClient) -> None:
     with respx.mock(assert_all_called=True) as mock:
         mock.get(f"{NSPD_BASE_URL}/api/geoportal/v2/search/geoportal").respond(400)
@@ -173,3 +196,60 @@ def test_map_feature_to_object_land_plot() -> None:
     assert mapped["object_type"] == "land_plot"
     assert mapped["area_sqm"] == 1500.0
     assert mapped["permitted_use"].startswith("Для индивидуального")
+
+
+def test_map_current_nspd_building_options() -> None:
+    raw = {
+        "source": "nspd",
+        "feature": {
+            "properties": {
+                "category": 36369,
+                "category_name": "Здания",
+                "options": {
+                    "build_record_type_value": "Здание",
+                    "cad_num": "77:08:0005003:1031",
+                    "readable_address": "г. Москва, ул. Свободы, д. 35, стр. 31",
+                    "build_record_area": 257.1,
+                    "cost_value": "12 345 678,90",
+                    "cost_determination_date": "2025-01-01",
+                    "build_record_registration_date": "2012-03-04T00:00:00",
+                    "params_year_built": "1987",
+                },
+            }
+        },
+    }
+
+    mapped = RosreestrClient.map_feature_to_object("77:08:0005003:1031", raw)
+
+    assert mapped["object_type"] == "house"
+    assert mapped["address"] == "г. Москва, ул. Свободы, д. 35, стр. 31"
+    assert mapped["area_sqm"] == 257.1
+    assert mapped["cadastral_cost_rub"] == 12_345_678.9
+    assert mapped["cadastral_cost_date"].isoformat() == "2025-01-01"
+    assert mapped["registration_date"].isoformat() == "2012-03-04"
+    assert mapped["year_built"] == 1987
+
+
+def test_map_current_nspd_structure_options() -> None:
+    raw = {
+        "source": "nspd",
+        "feature": {
+            "properties": {
+                "category_name": "Сооружения",
+                "options": {
+                    "object_type_value": "Сооружение",
+                    "cad_number": "77:08:0005003:1063",
+                    "address_readable_address": "г. Москва, ул. Свободы, д. 35, стр. 9",
+                    "params_area": 882.5,
+                    "cost_value": 42_000_000,
+                },
+            }
+        },
+    }
+
+    mapped = RosreestrClient.map_feature_to_object("77:08:0005003:1063", raw)
+
+    assert mapped["object_type"] == "non_residential"
+    assert mapped["address"].endswith("стр. 9")
+    assert mapped["area_sqm"] == 882.5
+    assert mapped["cadastral_cost_rub"] == 42_000_000.0
